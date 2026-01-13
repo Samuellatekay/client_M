@@ -3,6 +3,19 @@ sudo apt update
 sudo apt install -y python3 python3-pip
 sudo apt install -y python3-full python3-venv
 
-
 2. buat izin
 chmod +x run_app.sh
+
+3. untuk aws intsal awscli
+sudo apt install awscli
+aws --version
+
+4. kalu tidak bisa install pake snapd
+sudo apt install -y snapd
+sudo snap install aws-cli --classic
+
+
+aws configure
+
+export AWS_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY

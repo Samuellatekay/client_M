@@ -1,4 +1,4 @@
-flask 
-psutil 
+flask
+psutil
 docker
 

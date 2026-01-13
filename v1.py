@@ -19,7 +19,6 @@ API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')
 @app.before_request
 def check_api_key():
     api_key = request.headers.get('mira-api-key')
-    print(f"Received API key: {api_key}")  # Debug
     if api_key != API_KEY:
         abort(403, description="Forbidden: Invalid API Key")
         
@@ -38,6 +37,7 @@ def get_containers():
             'name': container.name,
             'image': container.image.tags if container.image.tags else [],
             'status': container.status,
+            'is_up': container.status == 'running',  # Tambahan: true jika running
             'ports': container.ports,
             
         })
@@ -112,11 +112,6 @@ def user_log():
         "auth_log": get_auth_log(),
         "system_log": get_system_log()        
     })
-    
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7000)
-
-
-
-
