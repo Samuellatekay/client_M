@@ -27,7 +27,7 @@ cached_data = {
 }
 
 data_lock = threading.Lock()
-update_interval = 10  # detik
+update_interval = 5  # detik
 
 # =============================
 # Update Data Once
