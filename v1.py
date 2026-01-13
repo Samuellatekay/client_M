@@ -58,7 +58,7 @@ def update_data_once():
                             'status': c.status,
                             'is_up': c.status == 'running',
                             'ports': c.ports,
-                            'restart_count': c.attrs.get('RestartCount', 0)
+                            'jumlah_restart': c.attrs.get('RestartCount', 0)
                         })
                 except Exception as e:
                     logging.error(f"Error docker scan: {e}")
