@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, abort, request
-import os, psutil, threading, time, logging, socket
+import os, psutil, threading, time, logging
 
 # =============================
 # Setup Logging
@@ -21,12 +21,6 @@ try:
 except Exception as e:
     logging.warning(f"Docker tidak tersedia: {e}")
     docker_client = None
-
-try:
-    import nmap
-except ImportError:
-    nmap = None
-    logging.warning("Nmap is not installed. Network scanning will be disabled.")
 
 # =============================
 # API KEY
@@ -175,48 +169,6 @@ def get_logs():
         "auth_log": get_auth_log(),
         "app_log": get_app_log()
     })
-
-# =============================
-# API: Network Devices
-# =============================
-@app.route('/api/v1/network/devices', methods=['GET'])
-def get_network_devices():
-    if not nmap:
-        return jsonify({"error": "nmap is not installed or not in system's PATH"}), 500
-
-    try:
-        nm = nmap.PortScanner()
-        # Get local IP to determine network range. This is a bit of a hack.
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        network = local_ip.rsplit('.', 1)[0] + '.0/24'
-    except Exception as e:
-        logging.error(f"Could not determine local network: {e}")
-        return jsonify({"error": "Could not determine local network"}), 500
-
-    try:
-        logging.info(f"Scanning network: {network}")
-        nm.scan(hosts=network, arguments='-sn') # -sn: Ping Scan - disable port scan
-        devices = []
-        for host in nm.all_hosts():
-            mac = nm[host]['addresses'].get('mac', 'N/A')
-            vendor = nm[host]['vendor'].get(mac, 'N/A') if mac != 'N/A' else 'N/A'
-            devices.append({
-                'ip': host,
-                'mac': mac,
-                'vendor': vendor,
-                'status': nm[host]['status']['state']
-            })
-        logging.info(f"Found {len(devices)} devices")
-        return jsonify({
-            "devices": devices,
-            "total": len(devices)
-        })
-    except Exception as e:
-        logging.error(f"Nmap scan failed: {e}")
-        return jsonify({"error": "Nmap scan failed"}), 500
 
 # =============================
 # Run App
