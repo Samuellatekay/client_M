@@ -14,7 +14,7 @@ try:
     docker_client = docker.from_env()
 except Exception as e:
     docker_client = None
-    print("Docker tidak tersedia:", e)
+    print("Docker error:", e)
 
 # =============================
 # API KEY
@@ -34,7 +34,7 @@ lock = threading.Lock()
 INTERVAL = 5  # detik
 
 # =============================
-# Helper: Hitung CPU %
+# Helper: CPU %
 # =============================
 def calculate_cpu_percent(stats):
     try:
@@ -48,60 +48,61 @@ def calculate_cpu_percent(stats):
 
         if system_delta > 0:
             return round((cpu_delta / system_delta) * cpu_count * 100, 2)
-
     except Exception:
         pass
-
     return 0.0
 
 # =============================
-# Update Monitoring Data
+# Update Data
 # =============================
 def update_data():
-    global cached_data
-
     while True:
         with lock:
-            container_list = []
+            result = []
 
             if docker_client:
-                containers = docker_client.containers.list(all=True)
-
-                for c in containers:
+                for c in docker_client.containers.list(all=True):
                     try:
                         c.reload()
+                        state = c.attrs["State"]
+                        status = state.get("Status", "unknown")
+                        restart_count = state.get("RestartCount", 0)
 
-                        stats = c.stats(stream=False)
+                        # ---------- STATUS ----------
+                        container_state = "UP" if status == "running" else "DOWN"
 
-                        cpu_percent = calculate_cpu_percent(stats)
+                        cpu = 0.0
+                        mem_used = 0.0
+                        mem_limit = 0.0
 
-                        mem_usage = stats["memory_stats"]["usage"] / (1024 ** 2)
-                        mem_limit = stats["memory_stats"]["limit"] / (1024 ** 2)
+                        if status == "running":
+                            stats = c.stats(stream=False)
+                            cpu = calculate_cpu_percent(stats)
+                            mem_used = stats["memory_stats"]["usage"] / (1024 ** 2)
+                            mem_limit = stats["memory_stats"]["limit"] / (1024 ** 2)
 
-                        restart_count = c.attrs.get("RestartCount", 0)
-
-                        container_list.append({
+                        result.append({
                             "id": c.id[:12],
                             "name": c.name,
                             "image": c.image.tags or [],
-                            "status": c.status,
-                            "is_up": c.status == "running",
-                            "cpu_percent": cpu_percent,
-                            "memory_usage_mb": round(mem_usage, 2),
+                            "docker_status": status,
+                            "state": container_state,
+                            "cpu_percent": cpu,
+                            "memory_usage_mb": round(mem_used, 2),
                             "memory_limit_mb": round(mem_limit, 2),
                             "restart_count": restart_count,
                             "ports": c.ports
                         })
 
                     except Exception as e:
-                        container_list.append({
+                        result.append({
                             "id": c.id[:12],
                             "name": c.name,
+                            "state": "ERROR",
                             "error": str(e)
                         })
 
-            # System info
-            cached_data["containers"] = container_list
+            cached_data["containers"] = result
             cached_data["system"] = {
                 "cpu_usage_percent": psutil.cpu_percent(),
                 "memory_usage_percent": psutil.virtual_memory().percent,
@@ -123,10 +124,8 @@ threading.Thread(target=update_data, daemon=True).start()
 def check_api_key():
     if request.endpoint == "health":
         return
-
-    api_key = request.headers.get("mira-api-key")
-    if api_key != API_KEY:
-        abort(403, "Forbidden")
+    if request.headers.get("mira-api-key") != API_KEY:
+        abort(403)
 
 # =============================
 # Health
