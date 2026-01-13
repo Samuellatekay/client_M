@@ -12,6 +12,14 @@ except Exception as e:
     print(f"Docker tidak tersedia: {e}")
     Client = None
 
+# Coba inisialisasi boto3 untuk AWS
+try:
+    import boto3
+    AWS_AVAILABLE = True
+except ImportError:
+    print("boto3 tidak tersedia, AWS checks disabled.")
+    AWS_AVAILABLE = False
+
 # api key for authentication api ke semetara
 API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')   
 
@@ -113,10 +121,65 @@ def user_log():
         "auth_log": get_auth_log(),
         "system_log": get_system_log()        
     })
-    
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=7000)
+# AWS misconfiguration dan policy checks
+@app.route('/api/v1/aws/checks', methods=['GET'])
+def aws_checks():
+    if not AWS_AVAILABLE:
+        return jsonify({"error": "AWS boto3 tidak tersedia"}), 503
+    
+    try:
+        # Inisialisasi clients
+        iam = boto3.client('iam')
+        ec2 = boto3.client('ec2')
+        s3 = boto3.client('s3')
+        
+        checks = {}
+        
+        # Check IAM policies
+        checks['iam_policies'] = []
+        policies = iam.list_policies(Scope='Local')['Policies']
+        for policy in policies[:5]:  # Limit to 5
+            checks['iam_policies'].append({
+                'name': policy['PolicyName'],
+                'arn': policy['Arn'],
+                'attached': len(iam.list_entities_for_policy(PolicyArn=policy['Arn'])['PolicyGroups']) > 0
+            })
+        
+        # Check S3 buckets for misconfigurations
+        checks['s3_buckets'] = []
+        buckets = s3.list_buckets()['Buckets']
+        for bucket in buckets[:5]:  # Limit to 5
+            bucket_name = bucket['Name']
+            try:
+                # Check public access
+                public = s3.get_bucket_public_access_block(Bucket=bucket_name)
+                checks['s3_buckets'].append({
+                    'name': bucket_name,
+                    'public_access_block': public.get('PublicAccessBlockConfiguration', {})
+                })
+            except Exception as e:
+                checks['s3_buckets'].append({
+                    'name': bucket_name,
+                    'error': str(e)
+                })
+        
+        # Check EC2 instances
+        checks['ec2_instances'] = []
+        instances = ec2.describe_instances()['Reservations']
+        for reservation in instances[:3]:  # Limit
+            for instance in reservation['Instances']:
+                checks['ec2_instances'].append({
+                    'id': instance['InstanceId'],
+                    'state': instance['State']['Name'],
+                    'public_ip': instance.get('PublicIpAddress', 'None'),
+                    'security_groups': [sg['GroupName'] for sg in instance['SecurityGroups']]
+                })
+        
+        return jsonify(checks)
+    
+    except Exception as e:
+        return jsonify({"error": f"AWS check failed: {str(e)}"}), 500
 
 
 
