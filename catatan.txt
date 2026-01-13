@@ -1,6 +1,8 @@
 1. intsall python dan pip
 sudo apt update
 sudo apt install -y python3 python3-pip
+sudo apt install -y python3-full python3-venv
+
 
 2. buat izin
 chmod +x run_app.sh

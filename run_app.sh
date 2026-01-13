@@ -1,5 +1,6 @@
 #!/bin/bash
 
+
 # Script untuk setup dan menjalankan aplikasi Flask dengan virtual environment
 # Pastikan Python dan pip sudah terinstall
 
