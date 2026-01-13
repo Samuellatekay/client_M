@@ -1,5 +1,8 @@
 from flask import Flask, jsonify, abort, request
-import os, psutil, platform, threading, time
+import os, psutil, platform, threading, time, logging
+
+# Setup logging
+logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
 
@@ -55,8 +58,7 @@ def update_data_once():
         
         cached_data['last_update'] = time.time()
         print(f"Data updated at {time.ctime()}")
-    except Exception as e:
-        print(f"Error updating data: {e}")
+        logging.info("Data cache updated")
 
 # Fungsi update data loop
 def update_data():
@@ -79,7 +81,9 @@ API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')
 def check_api_key():
     api_key = request.headers.get('mira-api-key')
     if api_key != API_KEY:
+        logging.warning(f"Invalid API key attempt: {request.remote_addr}")
         abort(403, description="Forbidden: Invalid API Key")
+    logging.info(f"API access from {request.remote_addr}")
         
 # Ambil data semua container
 @app.route('/api/v1/containers', methods=['GET'])
@@ -137,13 +141,22 @@ def get_system_log():
         return "\n".join(events)
     except Exception as e:
         return f"System log tidak tersedia: {e}"
+
+def get_app_log():
+    try:
+        with open('app.log', 'r') as f:
+            lines = f.readlines()[-20:]  # Ambil 20 baris terakhir
+            return ''.join(lines)
+    except Exception as e:
+        return f"App log tidak tersedia: {e}"
    
 # data log user
 @app.route('/api/v1/user/logs', methods=['GET'])
 def user_log():
     return jsonify({
         "auth_log": get_auth_log(),
-        "system_log": get_system_log()        
+        "system_log": get_system_log(),
+        "app_log": get_app_log()        
     })
 
 # Set update interval (dalam detik)
