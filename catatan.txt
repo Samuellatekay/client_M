@@ -2,4 +2,4 @@
 chmod +x run_app.sh
 
 
-catan
+hapus saya samuel
