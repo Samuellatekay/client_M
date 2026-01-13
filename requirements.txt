@@ -1,5 +1,4 @@
 flask
 psutil
 docker
-boto3
-
+python-nmap
