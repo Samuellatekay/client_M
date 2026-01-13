@@ -38,6 +38,7 @@ def get_containers():
             'name': container.name,
             'image': container.image.tags if container.image.tags else [],
             'status': container.status,
+            'is_up': container.status == 'running',  # Tambahan: true jika running
             'ports': container.ports,
             
         })
