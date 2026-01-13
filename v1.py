@@ -1,188 +1,213 @@
 from flask import Flask, jsonify, abort, request
 import os, psutil, platform, threading, time, logging
 
-# Setup logging
-logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# =============================
+# Setup Logging
+# =============================
+logging.basicConfig(
+    filename='app.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 app = Flask(__name__)
 
-# Coba inisialisasi Docker, jika gagal, set ke None
+# =============================
+# Docker Client (Safe Init)
+# =============================
 try:
     import docker
-    Client = docker.from_env()
+    docker_client = docker.from_env()
 except Exception as e:
-    print(f"Docker tidak tersedia: {e}")
-    Client = None
+    logging.warning(f"Docker tidak tersedia: {e}")
+    docker_client = None
 
-# api key for authentication api ke semetara
-API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')   
+# =============================
+# API KEY
+# =============================
+API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')
 
-# Global data cache
+# =============================
+# Global Cache + Lock
+# =============================
 cached_data = {
     'containers': [],
     'user_status': {},
     'last_update': 0
 }
-update_interval = 300  # Default 5 menit (300 detik)
 
-# Fungsi update data sekali
+data_lock = threading.Lock()
+update_interval = 300  # 5 menit
+
+# =============================
+# Update Data Once
+# =============================
 def update_data_once():
     try:
-        # Update containers
-        if Client:
-            containers = Client.containers.list(all=True)
-            cached_data['containers'] = []
-            for container in containers:
-                cached_data['containers'].append({
-                    'id': container.id,
-                    'name': container.name,
-                    'image': container.image.tags if container.image.tags else [],
-                    'status': container.status,
-                    'is_up': container.status == 'running',
-                    'ports': container.ports,
-                })
-        
-        # Update user status
-        cpu_usage = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        cached_data['user_status'] = {
-            'cpu_usage_percent': cpu_usage,
-            'memory_total_mb': memory.total // (1024 * 1024),
-            'memory_used_mb': memory.used // (1024 * 1024),
-            'memory_free_mb': memory.available // (1024 * 1024),
-            'disk_total_gb': disk.total // (1024 * 1024 * 1024),
-            'disk_used_gb': disk.used // (1024 * 1024 * 1024),
-            'disk_free_gb': disk.free // (1024 * 1024 * 1024),
-        }
-        
-        cached_data['last_update'] = time.time()
-        print(f"Data updated at {time.ctime()}")
-        logging.info("Data cache updated")
+        with data_lock:
+            # ---------- Docker Containers ----------
+            containers_data = []
+            if docker_client:
+                try:
+                    containers = docker_client.containers.list(all=True)
+                    for c in containers:
+                        containers_data.append({
+                            'id': c.id,
+                            'name': c.name,
+                            'image': c.image.tags or [],
+                            'status': c.status,
+                            'is_up': c.status == 'running',
+                            'ports': c.ports
+                        })
+                except Exception as e:
+                    logging.error(f"Error docker scan: {e}")
 
-# Fungsi update data loop
-def update_data():
+            cached_data['containers'] = containers_data
+
+            # ---------- System Status ----------
+            cpu = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+
+            cached_data['user_status'] = {
+                'cpu_usage_percent': cpu,
+                'memory_total_mb': mem.total // (1024 ** 2),
+                'memory_used_mb': mem.used // (1024 ** 2),
+                'memory_free_mb': mem.available // (1024 ** 2),
+                'disk_total_gb': disk.total // (1024 ** 3),
+                'disk_used_gb': disk.used // (1024 ** 3),
+                'disk_free_gb': disk.free // (1024 ** 3),
+            }
+
+            cached_data['last_update'] = time.time()
+
+        logging.info("Data cache berhasil diupdate")
+
+    except Exception as e:
+        logging.error(f"Update error: {e}")
+
+# =============================
+# Background Thread
+# =============================
+def update_loop():
     while True:
         update_data_once()
         time.sleep(update_interval)
 
-# Start background thread
-update_thread = threading.Thread(target=update_data, daemon=True)
-update_thread.start()
+threading.Thread(target=update_loop, daemon=True).start()
 
-# Initial update
+# Initial load
 update_data_once()
 
-# api key for authentication api key semetara
-API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')   
-
-# cek api key 
+# =============================
+# API KEY Middleware
+# =============================
 @app.before_request
 def check_api_key():
+    if request.endpoint in ['health_check']:
+        return
+
     api_key = request.headers.get('mira-api-key')
     if api_key != API_KEY:
-        logging.warning(f"Invalid API key attempt: {request.remote_addr}")
+        logging.warning(f"Unauthorized access from {request.remote_addr}")
         abort(403, description="Forbidden: Invalid API Key")
-    logging.info(f"API access from {request.remote_addr}")
-        
-# Ambil data semua container
+
+# =============================
+# Health Check
+# =============================
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "ok"})
+
+# =============================
+# API: Containers
+# =============================
 @app.route('/api/v1/containers', methods=['GET'])
 def get_containers():
-    return jsonify({
-        "total": len(cached_data['containers']),
-        "containers": cached_data['containers'],
-        "last_update": time.ctime(cached_data['last_update'])
-    })
+    with data_lock:
+        return jsonify({
+            "total": len(cached_data['containers']),
+            "containers": cached_data['containers'],
+            "last_update": time.ctime(cached_data['last_update'])
+        })
 
-# Ambil data vm
+# =============================
+# API: System Status
+# =============================
 @app.route('/api/v1/user', methods=['GET'])
-def user_status():
-    return jsonify({
-        **cached_data['user_status'],
-        "last_update": time.ctime(cached_data['last_update'])
-    })
-    
-# Fungsi untuk log
-def get_auth_log():
-    os_type = platform.system()
-    if os_type == 'Windows':
-        try:
-            import win32evtlog
-            log = win32evtlog.OpenEventLog(None, 'Security')
-            events = []
-            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-            events_read = win32evtlog.ReadEventLog(log, flags, 0)
-            for event in events_read[:10]:
-                events.append(f"Event ID: {event.EventID}, Time: {event.TimeGenerated}")
-            win32evtlog.CloseEventLog(log)
-            return "\n".join(events)
-        except Exception as e:
-            return f"Auth log tidak tersedia: {e}"
-    elif os_type == 'Linux':
-        try:
-            with open('/var/log/auth.log', 'r') as f:
-                lines = f.readlines()[-10:]  # Ambil 10 baris terakhir
-                return ''.join(lines)
-        except Exception as e:
-            return f"Auth log tidak tersedia: {e}"
-    else:
-        return "OS tidak didukung"
+def get_user_status():
+    with data_lock:
+        return jsonify({
+            **cached_data['user_status'],
+            "last_update": time.ctime(cached_data['last_update'])
+        })
 
-def get_system_log():
+# =============================
+# Logs Functions
+# =============================
+def get_auth_log():
     try:
-        import win32evtlog
-        log = win32evtlog.OpenEventLog(None, 'System')
-        events = []
-        flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-        events_read = win32evtlog.ReadEventLog(log, flags, 0)
-        for event in events_read[:10]:
-            events.append(f"Event ID: {event.EventID}, Time: {event.TimeGenerated}")
-        win32evtlog.CloseEventLog(log)
-        return "\n".join(events)
+        if platform.system() == 'Linux':
+            with open('/var/log/auth.log', 'r') as f:
+                return ''.join(f.readlines()[-10:])
+        elif platform.system() == 'Windows':
+            return "Windows auth log not implemented"
+        return "OS not supported"
     except Exception as e:
-        return f"System log tidak tersedia: {e}"
+        return f"Auth log error: {e}"
 
 def get_app_log():
     try:
         with open('app.log', 'r') as f:
-            lines = f.readlines()[-20:]  # Ambil 20 baris terakhir
-            return ''.join(lines)
+            return ''.join(f.readlines()[-20:])
     except Exception as e:
-        return f"App log tidak tersedia: {e}"
-   
-# data log user
+        return f"App log error: {e}"
+
+# =============================
+# API: Logs
+# =============================
 @app.route('/api/v1/user/logs', methods=['GET'])
-def user_log():
+def get_logs():
     return jsonify({
         "auth_log": get_auth_log(),
-        "system_log": get_system_log(),
-        "app_log": get_app_log()        
+        "app_log": get_app_log()
     })
 
-# Set update interval (dalam detik)
+# =============================
+# API: Set Interval
+# =============================
 @app.route('/api/v1/settings/interval', methods=['POST'])
 def set_interval():
     global update_interval
-    data = request.get_json()
-    if 'interval' in data:
-        new_interval = int(data['interval'])
-        if new_interval > 0:
-            update_interval = new_interval
-            return jsonify({"message": f"Update interval set to {new_interval} seconds"})
-        else:
-            return jsonify({"error": "Interval must be positive"}), 400
-    return jsonify({"error": "Missing 'interval' in request"}), 400
+    data = request.get_json() or {}
 
-# Force update data
+    if 'interval' not in data:
+        return jsonify({"error": "interval is required"}), 400
+
+    try:
+        new_interval = int(data['interval'])
+        if new_interval <= 0:
+            raise ValueError
+        update_interval = new_interval
+        return jsonify({"message": f"Interval set to {new_interval} seconds"})
+    except ValueError:
+        return jsonify({"error": "interval must be positive integer"}), 400
+
+# =============================
+# API: Force Update
+# =============================
 @app.route('/api/v1/update', methods=['POST'])
 def force_update():
     update_data_once()
-    return jsonify({"message": "Data updated", "last_update": time.ctime(cached_data['last_update'])})
-    
+    return jsonify({
+        "message": "Data updated",
+        "last_update": time.ctime(cached_data['last_update'])
+    })
 
+# =============================
+# Run App
+# =============================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7000)
-
-
-
+# =============================
 
