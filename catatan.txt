@@ -1,0 +1,2 @@
+1. buat izin
+chmod +x run_app.sh
