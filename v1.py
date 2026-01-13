@@ -1,6 +1,5 @@
 from flask import Flask, jsonify, abort, request
-import os, psutil
-import platform
+import os, psutil, platform, threading, time
 
 app = Flask(__name__)
 
@@ -12,15 +11,67 @@ except Exception as e:
     print(f"Docker tidak tersedia: {e}")
     Client = None
 
-# Coba inisialisasi boto3 untuk AWS
-try:
-    import boto3
-    AWS_AVAILABLE = True
-except ImportError:
-    print("boto3 tidak tersedia, AWS checks disabled.")
-    AWS_AVAILABLE = False
-
 # api key for authentication api ke semetara
+API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')   
+
+# Global data cache
+cached_data = {
+    'containers': [],
+    'user_status': {},
+    'last_update': 0
+}
+update_interval = 300  # Default 5 menit (300 detik)
+
+# Fungsi update data sekali
+def update_data_once():
+    try:
+        # Update containers
+        if Client:
+            containers = Client.containers.list(all=True)
+            cached_data['containers'] = []
+            for container in containers:
+                cached_data['containers'].append({
+                    'id': container.id,
+                    'name': container.name,
+                    'image': container.image.tags if container.image.tags else [],
+                    'status': container.status,
+                    'is_up': container.status == 'running',
+                    'ports': container.ports,
+                })
+        
+        # Update user status
+        cpu_usage = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        cached_data['user_status'] = {
+            'cpu_usage_percent': cpu_usage,
+            'memory_total_mb': memory.total // (1024 * 1024),
+            'memory_used_mb': memory.used // (1024 * 1024),
+            'memory_free_mb': memory.available // (1024 * 1024),
+            'disk_total_gb': disk.total // (1024 * 1024 * 1024),
+            'disk_used_gb': disk.used // (1024 * 1024 * 1024),
+            'disk_free_gb': disk.free // (1024 * 1024 * 1024),
+        }
+        
+        cached_data['last_update'] = time.time()
+        print(f"Data updated at {time.ctime()}")
+    except Exception as e:
+        print(f"Error updating data: {e}")
+
+# Fungsi update data loop
+def update_data():
+    while True:
+        update_data_once()
+        time.sleep(update_interval)
+
+# Start background thread
+update_thread = threading.Thread(target=update_data, daemon=True)
+update_thread.start()
+
+# Initial update
+update_data_once()
+
+# api key for authentication api key semetara
 API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')   
 
 # cek api key 
@@ -33,44 +84,18 @@ def check_api_key():
 # Ambil data semua container
 @app.route('/api/v1/containers', methods=['GET'])
 def get_containers():
-    if Client is None:
-        return jsonify({"error": "Docker tidak tersedia"}), 503
-    
-    containers = Client.containers.list(all=True)
-    data_container = []
-    
-    for container in containers:
-        data_container.append({
-            'id': container.id,
-            'name': container.name,
-            'image': container.image.tags if container.image.tags else [],
-            'status': container.status,
-            'is_up': container.status == 'running',  # Tambahan: true jika running
-            'ports': container.ports,
-            
-        })
     return jsonify({
-        "total": len(data_container),
-        "containers": data_container
-
-        
+        "total": len(cached_data['containers']),
+        "containers": cached_data['containers'],
+        "last_update": time.ctime(cached_data['last_update'])
     })
 
 # Ambil data vm
 @app.route('/api/v1/user', methods=['GET'])
 def user_status():
-    cpu_usage = psutil.cpu_percent(interval=1)
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-    
     return jsonify({
-        'cpu_usage_percent': cpu_usage,
-        'memory_total_mb': memory.total // (1024 * 1024),
-        'memory_used_mb': memory.used // (1024 * 1024),
-        'memory_free_mb': memory.available // (1024 * 1024),
-        'disk_total_gb': disk.total // (1024 * 1024 * 1024),
-        'disk_used_gb': disk.used // (1024 * 1024 * 1024),
-        'disk_free_gb': disk.free // (1024 * 1024 * 1024),
+        **cached_data['user_status'],
+        "last_update": time.ctime(cached_data['last_update'])
     })
     
 # Fungsi untuk log
@@ -120,6 +145,26 @@ def user_log():
         "auth_log": get_auth_log(),
         "system_log": get_system_log()        
     })
+
+# Set update interval (dalam detik)
+@app.route('/api/v1/settings/interval', methods=['POST'])
+def set_interval():
+    global update_interval
+    data = request.get_json()
+    if 'interval' in data:
+        new_interval = int(data['interval'])
+        if new_interval > 0:
+            update_interval = new_interval
+            return jsonify({"message": f"Update interval set to {new_interval} seconds"})
+        else:
+            return jsonify({"error": "Interval must be positive"}), 400
+    return jsonify({"error": "Missing 'interval' in request"}), 400
+
+# Force update data
+@app.route('/api/v1/update', methods=['POST'])
+def force_update():
+    update_data_once()
+    return jsonify({"message": "Data updated", "last_update": time.ctime(cached_data['last_update'])})
     
 
 if __name__ == '__main__':
