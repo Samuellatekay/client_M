@@ -1,9 +1,4 @@
-<<<<<<< HEAD
 flask 
 psutil 
 docker
-=======
-flask 
-psutil 
-docker
->>>>>>> 717ca13852783734feef2ae487eb1eb91f42f4fc
+
