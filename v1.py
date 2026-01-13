@@ -12,6 +12,14 @@ except Exception as e:
     print(f"Docker tidak tersedia: {e}")
     Client = None
 
+# Coba inisialisasi boto3 untuk AWS
+try:
+    import boto3
+    AWS_AVAILABLE = True
+except ImportError:
+    print("boto3 tidak tersedia, AWS checks disabled.")
+    AWS_AVAILABLE = False
+
 # api key for authentication api ke semetara
 API_KEY = os.getenv('API_KEY', '38f863078f79bdc96e199552ba728afd')   
 
@@ -112,6 +120,11 @@ def user_log():
         "auth_log": get_auth_log(),
         "system_log": get_system_log()        
     })
+    
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7000)
+
+
+
+

@@ -1,4 +1,5 @@
 flask
 psutil
 docker
+boto3
 
