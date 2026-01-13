@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, abort, request
-import os, psutil, platform, threading, time, logging
+import os, psutil, threading, time, logging
 
 # =============================
 # Setup Logging
@@ -57,7 +57,8 @@ def update_data_once():
                             'image': c.image.tags or [],
                             'status': c.status,
                             'is_up': c.status == 'running',
-                            'ports': c.ports
+                            'ports': c.ports,
+                            'restart_count': c.attrs.get('RestartCount', 0)
                         })
                 except Exception as e:
                     logging.error(f"Error docker scan: {e}")
@@ -147,12 +148,8 @@ def get_user_status():
 # =============================
 def get_auth_log():
     try:
-        if platform.system() == 'Linux':
-            with open('/var/log/auth.log', 'r') as f:
-                return ''.join(f.readlines()[-10:])
-        elif platform.system() == 'Windows':
-            return "Windows auth log not implemented"
-        return "OS not supported"
+        with open('/var/log/auth.log', 'r') as f:
+            return ''.join(f.readlines()[-10:])
     except Exception as e:
         return f"Auth log error: {e}"
 
@@ -171,37 +168,6 @@ def get_logs():
     return jsonify({
         "auth_log": get_auth_log(),
         "app_log": get_app_log()
-    })
-
-# =============================
-# API: Set Interval
-# =============================
-@app.route('/api/v1/settings/interval', methods=['POST'])
-def set_interval():
-    global update_interval
-    data = request.get_json() or {}
-
-    if 'interval' not in data:
-        return jsonify({"error": "interval is required"}), 400
-
-    try:
-        new_interval = int(data['interval'])
-        if new_interval <= 0:
-            raise ValueError
-        update_interval = new_interval
-        return jsonify({"message": f"Interval set to {new_interval} seconds"})
-    except ValueError:
-        return jsonify({"error": "interval must be positive integer"}), 400
-
-# =============================
-# API: Force Update
-# =============================
-@app.route('/api/v1/update', methods=['POST'])
-def force_update():
-    update_data_once()
-    return jsonify({
-        "message": "Data updated",
-        "last_update": time.ctime(cached_data['last_update'])
     })
 
 # =============================
